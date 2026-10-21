@@ -43,7 +43,7 @@
     "generative-ai": "^0.1.4",
     "human-readable": "^0.2.1",
     "hybrid-ytdl": "^1.2.4",
-    "jimp": "^0.16.3",
+    "jimp": "^1.6.1",
     "moment-timezone": "^0.5.34",
     "node-fetch": "^2.6.1",
     "node-upload-images": "^1.0.1",
