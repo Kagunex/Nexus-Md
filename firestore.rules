@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedInAs(uid) { return request.auth != null && request.auth.uid == uid; }
+
+    match /users/{uid} {
+      allow read: if signedInAs(uid);
+      allow create, update: if signedInAs(uid)
+        && request.resource.data.keys().hasOnly(['displayName', 'email', 'createdAt', 'updatedAt', 'preferences'])
+        && request.resource.data.email == request.auth.token.email;
+      allow delete: if false;
+
+      match /sessions/{sessionId} {
+        allow read: if signedInAs(uid);
+        // Only trusted worker/Admin endpoints may write lifecycle status.
+        allow write: if false;
+      }
+      match /activity/{activityId} {
+        allow read: if signedInAs(uid);
+        allow write: if false;
+      }
+    }
+    match /_baileysAuth/{document=**} { allow read, write: if false; }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

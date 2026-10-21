@@ -1,0 +1,19 @@
+'use client';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState, ReactNode } from 'react';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { Activity, Bot, LayoutDashboard, LogOut, Menu, Settings, X } from 'lucide-react';
+import { getFirebaseAuth, getFirebaseDb } from '@/lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+
+const links = [{ href: '/dashboard', label: 'Overview', icon: LayoutDashboard }, { href: '/settings', label: 'Settings', icon: Settings }];
+export function AppShell({ children, title, eyebrow }: { children: ReactNode; title: string; eyebrow: string }) {
+  const [user, setUser] = useState<User | null>(null); const [compact, setCompact] = useState(false); const [ready, setReady] = useState(false); const [collapsed, setCollapsed] = useState(false); const [mobileOpen, setMobileOpen] = useState(false); const router = useRouter(); const pathname = usePathname();
+  useEffect(() => { try { return onAuthStateChanged(getFirebaseAuth(), (current) => { setUser(current); setReady(true); if (!current) router.replace('/login'); }); } catch { setReady(true); router.replace('/login'); } }, [router]);
+  useEffect(() => { if (!user) return; try { return onSnapshot(doc(getFirebaseDb(), 'users', user.uid), (snapshot) => setCompact(snapshot.data()?.preferences?.compactMode === true)); } catch { return; } }, [user]);
+  async function logout() { await signOut(getFirebaseAuth()); router.replace('/'); }
+  if (!ready || !user) return <div className="loading-screen"><div className="skeleton skeleton-logo"/><div className="skeleton skeleton-title"/><div className="skeleton skeleton-card"/><div className="skeleton skeleton-card"/></div>;
+  const nav = <><div className="side-brand"><Link className="brand" href="/dashboard"><span className="brand-mark">N</span>{!collapsed && <span>NEXORA <b>MD</b></span>}</Link><button className="icon-button collapse-button" aria-label="Ciutkan navigasi" onClick={() => setCollapsed(!collapsed)}><Menu size={18}/></button></div><div className="workspace-label">{!collapsed && 'WORKSPACE'}</div><nav className="side-nav">{links.map(({ href, label, icon: Icon }) => <Link onClick={() => setMobileOpen(false)} key={href} className={pathname === href ? 'nav-item active' : 'nav-item'} href={href} title={collapsed ? label : undefined}><Icon size={18}/>{!collapsed && <span>{label}</span>}{pathname === href && <i/>}</Link>)}</nav><div className="side-bottom"><div className="engine-status"><span className="status-ring"><Activity size={15}/></span>{!collapsed && <div><b>ENGINE</b><small>WORKER NOT LINKED</small></div>}</div><button className="nav-item logout-item" onClick={logout}><LogOut size={18}/>{!collapsed && <span>Keluar</span>}</button></div></>;
+  return <div className={`app-frame ${collapsed ? 'is-collapsed' : ''}`}><aside className="sidebar">{nav}</aside>{mobileOpen && <div className="mobile-drawer"><button className="icon-button drawer-close" onClick={() => setMobileOpen(false)} aria-label="Tutup navigasi"><X size={20}/></button>{nav}</div>}<div className="main-column"><header className="app-header"><button className="icon-button mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Buka navigasi"><Menu size={20}/></button><div className="page-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="account-chip"><div className="avatar">{(user.displayName || user.email || 'N').slice(0,1).toUpperCase()}</div><div className="account-meta"><b>{user.displayName || 'NEXORA user'}</b><span>Firebase account</span></div><span className="account-dot"/></div></header><main className={`app-content ${compact ? 'compact-content' : ''}`}>{children}</main><footer className="app-footer"><span><Bot size={14}/> NEXORA MD CONTROL PLANE</span><span>BAILEYS ENGINE / SEPARATE WORKER</span></footer></div></div>;
+}
