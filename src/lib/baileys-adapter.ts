@@ -20,36 +20,38 @@ function getConfig() {
   const url = process.env.NEXORA_BAILEYS_WORKER_URL?.replace(/\/+$/, "");
   const token = process.env.NEXORA_BAILEYS_WORKER_TOKEN;
 
-  if (!url || !token) return null;
+  if (!url || !token || token.length < 32) return null;
 
-  // Never send the worker secret over plain HTTP.
-  let parsed: URL;
   try {
-    parsed = new URL(url);
+    const parsed = new URL(url);
+
+    if (parsed.protocol !== "https:") return null;
+
+    return { url, token };
   } catch {
     return null;
   }
-
-  if (parsed.protocol !== "https:") return null;
-  if (token.length < 32) return null;
-
-  return { url, token };
 }
 
 export function getBaileysWorkerAdapter(): BaileysWorkerAdapter | null {
   const config = getConfig();
+
   if (!config) return null;
+
+  // Salin konfigurasi setelah pemeriksaan null agar TypeScript
+  // tetap mengetahui bahwa nilainya valid di dalam fungsi async.
+  const workerConfig = config;
 
   async function call<T>(
     endpoint: string,
     init: RequestInit = {},
   ): Promise<T> {
-    const response = await fetch(`${config.url}${endpoint}`, {
+    const response = await fetch(`${workerConfig.url}${endpoint}`, {
       ...init,
       cache: "no-store",
       signal: AbortSignal.timeout(45_000),
       headers: {
-        authorization: `Bearer ${config.token}`,
+        authorization: `Bearer ${workerConfig.token}`,
         "content-type": "application/json",
         ...init.headers,
       },
@@ -58,9 +60,11 @@ export function getBaileysWorkerAdapter(): BaileysWorkerAdapter | null {
     const result = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      const error = result as { error?: unknown };
+
       throw new Error(
-        typeof result.error === "string"
-          ? result.error
+        typeof error.error === "string"
+          ? error.error
           : `Worker returned HTTP ${response.status}`,
       );
     }
