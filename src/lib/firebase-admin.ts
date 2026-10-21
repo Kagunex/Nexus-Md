@@ -15,26 +15,29 @@ function adminApp(): App {
     (item) => item.name === 'nexora-admin',
   );
 
-  if (existing) {
-    return existing;
-  }
+  if (existing) return existing;
 
-  const encoded =
-    process.env.NEXORA_FIREBASE_SERVICE_ACCOUNT_BASE64;
+  const raw = process.env.NEXORA_FIREBASE_SERVICE_ACCOUNT_BASE64;
 
-  if (!encoded) {
+  if (!raw?.trim()) {
     throw new Error(
       'Konfigurasi server Firebase belum tersedia. Tambahkan NEXORA_FIREBASE_SERVICE_ACCOUNT_BASE64.',
     );
   }
 
   try {
-    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-    const serviceAccount = JSON.parse(decoded);
+    const value = raw.trim();
+    let serviceAccount: Record<string, unknown>;
+
+    // Terima JSON langsung atau JSON yang di-encode Base64.
+    if (value.startsWith('{')) {
+      serviceAccount = JSON.parse(value);
+    } else {
+      const decoded = Buffer.from(value, 'base64').toString('utf8');
+      serviceAccount = JSON.parse(decoded);
+    }
 
     if (
-      !serviceAccount ||
-      typeof serviceAccount !== 'object' ||
       typeof serviceAccount.project_id !== 'string' ||
       typeof serviceAccount.client_email !== 'string' ||
       typeof serviceAccount.private_key !== 'string'
@@ -42,21 +45,28 @@ function adminApp(): App {
       throw new Error('Invalid service account structure');
     }
 
+    const projectId = serviceAccount.project_id;
+
     return initializeApp(
       {
-        credential: cert(serviceAccount),
-        projectId: serviceAccount.project_id,
+        credential: cert({
+          projectId,
+          clientEmail: serviceAccount.client_email,
+          privateKey: serviceAccount.private_key,
+        }),
+        projectId,
       },
       'nexora-admin',
     );
   } catch (error) {
+    // Jangan log isi kredensial atau private key.
     console.error(
       '[NEXORA FIREBASE] Admin initialization failed:',
       error instanceof Error ? error.message : 'Unknown error',
     );
 
     throw new Error(
-      'Konfigurasi server Firebase tidak valid. Periksa Base64 service account dan kredensial Firebase Admin.',
+      'Konfigurasi Firebase Admin tidak valid. Periksa JSON service account atau Base64-nya.',
     );
   }
 }
@@ -87,12 +97,11 @@ export async function verifyRequest(request: Request) {
 
   try {
     const { adminAuth } = getAdminServices();
-
-    const decodedToken = await adminAuth.verifyIdToken(match[1]);
+    const identity = await adminAuth.verifyIdToken(match[1]);
 
     console.info('[NEXORA AUTH] Firebase ID token verified');
 
-    return decodedToken;
+    return identity;
   } catch (error) {
     const code =
       typeof error === 'object' &&
