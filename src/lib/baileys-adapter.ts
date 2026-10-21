@@ -16,16 +16,38 @@ export interface BaileysWorkerAdapter {
   }): Promise<void>;
 }
 
-function getConfig() {
-  const url = process.env.NEXORA_BAILEYS_WORKER_URL?.replace(/\/+$/, "");
-  const token = process.env.NEXORA_BAILEYS_WORKER_TOKEN;
+type WorkerConfig = {
+  url: string;
+  token: string;
+};
 
-  if (!url || !token || token.length < 32) return null;
+type WorkerErrorResponse = {
+  error?: unknown;
+  message?: unknown;
+};
+
+function getConfig(): WorkerConfig | null {
+  const rawUrl = process.env.NEXORA_BAILEYS_WORKER_URL?.trim();
+  const token = process.env.NEXORA_BAILEYS_WORKER_TOKEN?.trim();
+
+  if (!rawUrl || !token || token.length < 32) {
+    return null;
+  }
 
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(rawUrl);
 
-    if (parsed.protocol !== "https:") return null;
+    // Worker wajib menggunakan HTTPS.
+    if (parsed.protocol !== "https:") {
+      return null;
+    }
+
+    // URL tidak boleh berisi kredensial.
+    if (parsed.username || parsed.password) {
+      return null;
+    }
+
+    const url = parsed.toString().replace(/\/+$/, "");
 
     return { url, token };
   } catch {
@@ -36,11 +58,13 @@ function getConfig() {
 export function getBaileysWorkerAdapter(): BaileysWorkerAdapter | null {
   const config = getConfig();
 
-  if (!config) return null;
+  // Jangan lanjut jika konfigurasi worker belum valid.
+  if (config === null) {
+    return null;
+  }
 
-  // Salin konfigurasi setelah pemeriksaan null agar TypeScript
-  // tetap mengetahui bahwa nilainya valid di dalam fungsi async.
-  const workerConfig = config;
+  // Salinan non-null untuk digunakan di dalam fungsi async.
+  const workerConfig: WorkerConfig = config;
 
   async function call<T>(
     endpoint: string,
@@ -51,37 +75,55 @@ export function getBaileysWorkerAdapter(): BaileysWorkerAdapter | null {
       cache: "no-store",
       signal: AbortSignal.timeout(45_000),
       headers: {
+        ...init.headers,
         authorization: `Bearer ${workerConfig.token}`,
         "content-type": "application/json",
-        ...init.headers,
       },
     });
 
-    const result = await response.json().catch(() => ({}));
+    const result: unknown = await response.json().catch(() => null);
 
     if (!response.ok) {
-      const error = result as { error?: unknown };
+      const errorResult = result as WorkerErrorResponse | null;
 
-      throw new Error(
-        typeof error.error === "string"
-          ? error.error
-          : `Worker returned HTTP ${response.status}`,
-      );
+      const message =
+        typeof errorResult?.error === "string"
+          ? errorResult.error
+          : typeof errorResult?.message === "string"
+            ? errorResult.message
+            : `Worker returned HTTP ${response.status}`;
+
+      throw new Error(message);
+    }
+
+    if (result === null || typeof result !== "object") {
+      throw new Error("Worker returned an invalid JSON response");
     }
 
     return result as T;
   }
 
   return {
-    async requestPairing(input) {
+    async requestPairing(input: PairingRequest): Promise<PairingResult> {
+      const phoneNumber = input.phoneNumber.replace(/\D/g, "");
+
+      if (!phoneNumber) {
+        throw new Error("Nomor WhatsApp tidak valid");
+      }
+
       const result = await call<Partial<PairingResult>>("/pairing", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify({
+          uid: input.uid,
+          phoneNumber,
+        }),
       });
 
       if (
         typeof result.sessionId !== "string" ||
-        typeof result.pairingCode !== "string"
+        !result.sessionId.trim() ||
+        typeof result.pairingCode !== "string" ||
+        !result.pairingCode.trim()
       ) {
         throw new Error("Worker returned an invalid pairing response");
       }
@@ -92,7 +134,10 @@ export function getBaileysWorkerAdapter(): BaileysWorkerAdapter | null {
       };
     },
 
-    async deleteSession(input) {
+    async deleteSession(input: {
+      uid: string;
+      sessionId: string;
+    }): Promise<void> {
       await call<{ ok: boolean }>("/session", {
         method: "DELETE",
         body: JSON.stringify(input),
